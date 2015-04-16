@@ -1,0 +1,6 @@
+mcbot
+=====
+
+AI minecraft player
+
+
