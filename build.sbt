@@ -9,9 +9,10 @@ mainClass in assembly := Some("mcbot.MCBot")
 jarName in assembly := "mcbot.jar"
 
 libraryDependencies ++= Seq(
-  "org.spacehq"       % "mcprotocollib"  % "1.8-SNAPSHOT",
-  "com.github.scopt" %% "scopt"          % "3.3.0",
-  "org.scalatest"    %% "scalatest"      % "2.2.+"  % "test"
+  "org.spacehq"        % "mcprotocollib"  % "1.8-SNAPSHOT",
+  "com.typesafe.akka" %% "akka-actor"     % "2.3.10",
+  "com.github.scopt"  %% "scopt"          % "3.3.0",
+  "org.scalatest"     %% "scalatest"      % "2.2.+"  % "test"
   )
 
 resolvers += Resolver.sonatypeRepo("public")

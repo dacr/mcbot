@@ -26,7 +26,11 @@ import org.spacehq.mc.protocol.data.status._
 import org.spacehq.mc.protocol.data.status.handler._
 import org.spacehq.mc.protocol.data.message._
 import org.spacehq.mc.protocol.packet.ingame.client.ClientChatPacket
+import org.spacehq.mc.protocol.packet.ingame.client.player._
+import org.spacehq.mc.protocol.data.game.values.entity.player._
 import org.spacehq.mc.protocol.packet.ingame.server._
+import org.spacehq.mc.protocol.data.game._
+import org.spacehq.mc.protocol.data.game.values._
 import org.spacehq.packetlib._
 import org.spacehq.packetlib.event.server._
 import org.spacehq.packetlib.event.session._
@@ -36,6 +40,10 @@ import org.spacehq.packetlib.packet.Packet;
 import java.net.Proxy
 import scala.collection.JavaConversions._
 
+import akka.actor._
+import ActorDSL._
+import com.typesafe.config.ConfigFactory
+import scala.concurrent.duration._
 
 case class MCBotConfig(username:String, password:String, port:Int, host:String="localhost")
 
@@ -49,21 +57,58 @@ object MCBotConfig {
   }
 }
 
+object MCBotActor {
+  def props() = Props(new MCBotActor())
+  case class MyPos(x:Double,y:Double,z:Double, yaw:Float, pitch:Float) {
+    def incX(s:Double) = copy(x=x+s)
+  }
+  case class Move()
+  case class Reverse()
+}
+
+class MCBotActor() extends Actor {
+  import MCBotActor._
+  var coords:Option[MyPos]=None
+  var session:Option[Session]=None
+  var step=.215
+  def receive = {
+    case s:Session if session.isEmpty => session = Some(s)
+    case p:MyPos if coords.isEmpty => coords = Some(p)
+    case Reverse() if coords.isDefined=> step = -step
+    case Move() if coords.isDefined =>
+      coords = coords.map(_.incX(step))
+      println(coords)
+      val move = new ClientPlayerPositionPacket(true, coords.get.x, coords.get.y, coords.get.z)
+      //val move = new ClientPlayerPositionPacket(true, coords.get.x, coords.get.y-1.62, coords.get.z)
+      //val move = new ClientPlayerPositionRotationPacket(true, coords.get.x, coords.get.y-1.62, coords.get.z, coords.get.yaw, coords.get.pitch)
+      session.foreach{_.send(move)}
+    case _ =>
+  }
+}
+
+
+
 
 object MCBot {
-  val VERIFY_USERS = true;
-  val PROXY = Proxy.NO_PROXY;
-
+  val VERIFY_USERS = true
+  val PROXY = Proxy.NO_PROXY
+  
+  val akkaconfig = ConfigFactory.load()
+  implicit val system = ActorSystem("mcbot", akkaconfig)
+  
   def main(args: Array[String]) {
     val defaultConfig = MCBotConfig(username = "", password = "", port = 0)
     MCBotConfig.parser.parse(args, defaultConfig) match {
       case Some(config) =>
         status(config)
-        login(config)
+        val ref = system.actorOf(MCBotActor.props(), "mcbot")
+        import system.dispatcher // use it as execution context
+        system.scheduler.schedule(10.seconds, 250.milliseconds, ref, MCBotActor.Move())
+        system.scheduler.schedule(10.seconds, 10.seconds, ref, MCBotActor.Reverse())
+        login(config, ref)
       case None =>
         println("Some issue with the config")
     }
-
   }
 
   def status(config:MCBotConfig) {
@@ -93,7 +138,7 @@ object MCBot {
     }
   }
 
-  def login(config:MCBotConfig) {
+  def login(config:MCBotConfig, ref:ActorRef) = {
     val protocol = if (VERIFY_USERS) {
       val prot = new MinecraftProtocol(config.username, config.password, false)
       System.out.println("Successfully authenticated user.");
@@ -136,11 +181,21 @@ object MCBot {
               val data:Array[Short] = blocks.getData // Always 4096 blocks
               
             }
+          case p:org.spacehq.mc.protocol.packet.ingame.server.entity.player.ServerPlayerPositionRotationPacket =>
+            val x = p.getX
+            val y = p.getY
+            val z = p.getZ
+            val yaw = p.getYaw
+            val pitch = p.getPitch
+            println(s"                                             (POS : x=$x y=$y z=$z)")
+            ref ! session
+            ref ! MCBotActor.MyPos(x,y,z,yaw,pitch)
+            
           case p:org.spacehq.mc.protocol.packet.ingame.server.world.ServerSpawnPositionPacket =>
             val x = p.getPosition.getX
             val y =  p.getPosition.getY
             val z =  p.getPosition.getZ
-            println(s"POS : x=$x y=$y z=$z")
+            //println(s"POS : x=$x y=$y z=$z")
           case p:org.spacehq.mc.protocol.packet.ingame.server.world.ServerWorldBorderPacket =>
             val xc = p.getCenterX
             val yc = p.getCenterY
@@ -151,8 +206,9 @@ object MCBot {
           case p:org.spacehq.mc.protocol.packet.ingame.server.world.ServerUpdateTileEntityPacket =>
           case p:org.spacehq.mc.protocol.packet.ingame.server.world.ServerBlockChangePacket =>
           case x =>
-            if (x.getClass.getName contains "world")
-               println(x.getClass.getName)
+            if (x.getClass.getName contains "world") println(x.getClass.getName)
+            else if (x.getClass.getName contains "player") println(x.getClass.getName)
+            else if (! x.getClass.getName.contains("ServerEntity")) println(x.getClass.getName)
         }
       }
 
@@ -165,6 +221,8 @@ object MCBot {
       }
     });
 
-    client.getSession().connect();
+    client.getSession().connect()
+        
+    client
   }
 }
